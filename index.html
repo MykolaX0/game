@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <title>PixelCraft Online</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+      user-select: none;
+    }
+
+    html,
+    body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #111827;
+      font-family: Arial, sans-serif;
+      color: white;
+    }
+
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      image-rendering: pixelated;
+      cursor: crosshair;
+    }
+
+    #ui {
+      position: fixed;
+      left: 14px;
+      top: 14px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: rgba(0, 0, 0, 0.48);
+      border: 2px solid rgba(255, 255, 255, 0.16);
+      font-size: 14px;
+      line-height: 1.45;
+      pointer-events: none;
+    }
+
+    #title {
+      font-size: 20px;
+      font-weight: 900;
+      color: #7dd3fc;
+      margin-bottom: 6px;
+      text-shadow: 0 2px black;
+    }
+
+    #status {
+      color: #86efac;
+      font-weight: bold;
+    }
+
+    #hotbar {
+      position: fixed;
+      left: 50%;
+      bottom: 18px;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 8px;
+      padding: 10px;
+      border-radius: 14px;
+      background: rgba(0, 0, 0, 0.52);
+      border: 2px solid rgba(255, 255, 255, 0.18);
+    }
+
+    .slot {
+      width: 58px;
+      height: 58px;
+      border: 3px solid rgba(255, 255, 255, 0.22);
+      border-radius: 10px;
+      display: grid;
+      place-items: center;
+      position: relative;
+      background: rgba(255, 255, 255, 0.08);
+      cursor: pointer;
+    }
+
+    .slot.selected {
+      border-color: #facc15;
+      box-shadow: 0 0 18px rgba(250, 204, 21, 0.55);
+      transform: translateY(-4px);
+    }
+
+    .key {
+      position: absolute;
+      left: 5px;
+      top: 3px;
+      font-size: 11px;
+    }
+
+    .count {
+      position: absolute;
+      right: 5px;
+      bottom: 3px;
+      font-weight: bold;
+      font-size: 13px;
+      text-shadow: 0 2px black;
+    }
+
+    .mini {
+      width: 30px;
+      height: 30px;
+      border: 2px solid rgba(0, 0, 0, 0.35);
+      box-shadow:
+        inset -6px -6px rgba(0, 0, 0, 0.16),
+        inset 5px 5px rgba(255, 255, 255, 0.14);
+    }
+
+    #msg {
+      position: fixed;
+      top: 14px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 10px 16px;
+      border-radius: 12px;
+      background: rgba(15, 23, 42, 0.82);
+      border: 2px solid rgba(255, 255, 255, 0.16);
+      opacity: 0;
+      transition: 0.2s;
+      font-weight: bold;
+      pointer-events: none;
+    }
+
+    #msg.show {
+      opacity: 1;
+    }
+  </style>
+</head>
+
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="ui">
+    <div id="title">PixelCraft Online</div>
+    <div>Статус: <span id="status">підключення...</span></div>
+    <div><b>WASD</b> — рух</div>
+    <div><b>ЛКМ</b> — ламати</div>
+    <div><b>ПКМ</b> — ставити блок</div>
+    <div><b>1-8</b> — вибір блоку</div>
+    <div>Прогрес зберігається на сервері</div>
+  </div>
+
+  <div id="msg"></div>
+  <div id="hotbar"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+    const hotbar = document.getElementById("hotbar");
+    const statusEl = document.getElementById("status");
+    const msgEl = document.getElementById("msg");
+
+    ctx.imageSmoothingEnabled = false;
+
+    const TILE = 32;
+
+    const GROUND = {
+      WATER: 1,
+      GRASS: 2,
+      SAND: 3,
+      DIRT: 4,
+      STONE: 5
+    };
+
+    const BLOCKS = {
+      1: {
+        name: "Земля",
+        color: "#8b5a2b",
+        top: "#a26834",
+        side: "#66421f",
+        solid: true
+      },
+      2: {
+        name: "Камінь",
+        color: "#7c8794",
+        top: "#9ca3af",
+        side: "#4b5563",
+        solid: true
+      },
+      3: {
+        name: "Дерево",
+        color: "#8b5a2b",
+        top: "#b77936",
+        side: "#5c3517",
+        solid: true
+      },
+      4: {
+        name: "Листя",
+        color: "#16a34a",
+        top: "#22c55e",
+        side: "#15803d",
+        solid: true
+      },
+      5: {
+        name: "Дошки",
+        color: "#c0844d",
+        top: "#d69b60",
+        side: "#8a552b",
+        solid: true
+      },
+      6: {
+        name: "Цегла",
+        color: "#b45309",
+        top: "#dc6828",
+        side: "#7c2d12",
+        solid: true
+      },
+      7: {
+        name: "Скло",
+        color: "#67e8f9",
+        top: "#a5f3fc",
+        side: "#0891b2",
+        solid: true,
+        alpha: 0.6
+      },
+      8: {
+        name: "Лампа",
+        color: "#fde047",
+        top: "#fef08a",
+        side: "#ca8a04",
+        solid: false
+      }
+    };
+
+    let playerId = localStorage.getItem("pixelcraft_player_id");
+
+    if (!playerId) {
+      if (crypto.randomUUID) {
+        playerId = crypto.randomUUID();
+      } else {
+        playerId = String(Date.now()) + Math.random();
+      }
+
+      localStorage.setItem("pixelcraft_player_id", playerId);
+    }
+
+    let playerName = localStorage.getItem("pixelcraft_name");
+
+    if (!playerName) {
+      playerName = prompt("Введи нік:", "Player") || "Player";
+      localStorage.setItem("pixelcraft_name", playerName);
+    }
+
+    const socket = io({
+      auth: {
+        playerId,
+        name: playerName
+      }
+    });
+
+    let world = null;
+    let me = null;
+    let players = {};
+    let inventory = {};
+    let selected = 1;
+
+    let cameraX = 0;
+    let cameraY = 0;
+
+    let keys = {};
+    let mouseX = 0;
+    let mouseY = 0;
+    let mouseTileX = 0;
+    let mouseTileY = 0;
+
+    let last = performance.now();
+    let lastMoveSend = 0;
+    let ready = false;
+
+    function resize() {
+      const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+
+      canvas.width = Math.floor(innerWidth * dpr);
+      canvas.height = Math.floor(innerHeight * dpr);
+      canvas.style.width = innerWidth + "px";
+      canvas.style.height = innerHeight + "px";
+
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.imageSmoothingEnabled = false;
+    }
+
+    window.addEventListener("resize", resize);
+    resize();
+
+    function idx(x, y) {
+      return y * world.width + x;
+    }
+
+    function inBounds(x, y) {
+      return (
+        world &&
+        x >= 0 &&
+        y >= 0 &&
+        x < world.width &&
+        y < world.height
+      );
+    }
+
+    function showMsg(text) {
+      msgEl.textContent = text;
+      msgEl.classList.add("show");
+
+      clearTimeout(showMsg.timer);
+
+      showMsg.timer = setTimeout(() => {
+        msgEl.classList.remove("show");
+      }, 1300);
+    }
+
+    function renderHotbar() {
+      hotbar.innerHTML = "";
+
+      for (let id = 1; id <= 8; id++) {
+        const block = BLOCKS[id];
+
+        const slot = document.createElement("div");
+        slot.className = "slot" + (id === selected ? " selected" : "");
+
+        const key = document.createElement("div");
+        key.className = "key";
+        key.textContent = id;
+
+        const mini = document.createElement("div");
+        mini.className = "mini";
+        mini.style.background = block.color;
+        mini.title = block.name;
+
+        const count = document.createElement("div");
+        count.className = "count";
+        count.textContent = inventory[id] || 0;
+
+        slot.appendChild(key);
+        slot.appendChild(mini);
+        slot.appendChild(count);
+
+        slot.onclick = () => {
+          selected = id;
+          renderHotbar();
+          showMsg("Обрано: " + block.name);
+        };
+
+        hotbar.appendChild(slot);
+      }
+    }
+
+    socket.on("connect", () => {
+      statusEl.textContent = "онлайн";
+    });
+
+    socket.on("disconnect", () => {
+      statusEl.textContent = "нема з'єднання";
+    });
+
+    socket.on("init", data => {
+      playerId = data.playerId;
+      localStorage.setItem("pixelcraft_player_id", playerId);
+
+      world = data.world;
+      me = data.player;
+      players = data.players || {};
+      inventory = me.inv || {};
+
+      ready = true;
+
+      renderHotbar();
+      showMsg("Підключено до онлайн-світу!");
+    });
+
+    socket.on("players", data => {
+      players = data || {};
+    });
+
+    socket.on("playerMove", data => {
+      if (!players[data.id]) return;
+
+      players[data.id].x = data.x;
+      players[data.id].y = data.y;
+    });
+
+    socket.on("tileUpdate", data => {
+      if (!world) return;
+      if (!inBounds(data.tx, data.ty)) return;
+
+      const i = idx(data.tx, data.ty);
+      world.ground[i] = data.ground;
+      world.objects[i] = data.object;
+    });
+
+    socket.on("inventory", inv => {
+      inventory = inv || {};
+      me.inv = inventory;
+      renderHotbar();
+    });
+
+    function isWaterAt(px, py) {
+      const tx = Math.floor(px / TILE);
+      const ty = Math.floor(py / TILE);
+
+      if (!inBounds(tx, ty)) return false;
+
+      return world.ground[idx(tx, ty)] === GROUND.WATER;
+    }
+
+    function isSolidObject(tx, ty) {
+      if (!inBounds(tx, ty)) return true;
+
+      const o = world.objects[idx(tx, ty)];
+
+      if (!o) return false;
+
+      return BLOCKS[o]?.solid;
+    }
+
+    function canStand(px, py, radius) {
+      const points = [
+        [px - radius, py - radius],
+        [px + radius, py - radius],
+        [px - radius, py + radius],
+        [px + radius, py + radius]
+      ];
+
+      for (const [x, y] of points) {
+        const tx = Math.floor(x / TILE);
+        const ty = Math.floor(y / TILE);
+
+        if (!inBounds(tx, ty)) return false;
+        if (isSolidObject(tx, ty)) return false;
+      }
+
+      return true;
+    }
+
+    function movePlayer(dt) {
+      let dx = 0;
+      let dy = 0;
+
+      if (keys["w"] || keys["arrowup"]) dy--;
+      if (keys["s"] || keys["arrowdown"]) dy++;
+      if (keys["a"] || keys["arrowleft"]) dx--;
+      if (keys["d"] || keys["arrowright"]) dx++;
+
+      const len = Math.hypot(dx, dy);
+
+      if (len > 0) {
+        dx /= len;
+        dy /= len;
+      }
+
+      let speed = 175;
+
+      if (isWaterAt(me.x, me.y)) {
+        speed *= 0.55;
+      }
+
+      const oldX = me.x;
+      const oldY = me.y;
+
+      const nx = me.x + dx * speed * dt;
+
+      if (canStand(nx, me.y, 11)) {
+        me.x = nx;
+      }
+
+      const ny = me.y + dy * speed * dt;
+
+      if (canStand(me.x, ny, 11)) {
+        me.y = ny;
+      }
+
+      if (oldX !== me.x || oldY !== me.y) {
+        players[playerId] = {
+          id: playerId,
+          name: me.name,
+          x: me.x,
+          y: me.y,
+          color: me.color
+        };
+
+        const now = performance.now();
+
+        if (now - lastMoveSend > 45) {
+          lastMoveSend = now;
+
+          socket.emit("move", {
+            x: me.x,
+            y: me.y
+          });
+        }
+      }
+    }
+
+    function update(dt) {
+      if (!ready) return;
+
+      movePlayer(dt);
+
+      cameraX = me.x - innerWidth / 2;
+      cameraY = me.y - innerHeight / 2;
+
+      cameraX = Math.max(0, Math.min(cameraX, world.width * TILE - innerWidth));
+      cameraY = Math.max(0, Math.min(cameraY, world.height * TILE - innerHeight));
+
+      mouseTileX = Math.floor((mouseX + cameraX) / TILE);
+      mouseTileY = Math.floor((mouseY + cameraY) / TILE);
+    }
+
+    function groundColor(type) {
+      if (type === GROUND.WATER) return "#0ea5e9";
+      if (type === GROUND.GRASS) return "#22c55e";
+      if (type === GROUND.SAND) return "#eab308";
+      if (type === GROUND.DIRT) return "#854d0e";
+      if (type === GROUND.STONE) return "#6b7280";
+      return "#22c55e";
+    }
+
+    function drawGroundTile(x, y, sx, sy, type) {
+      ctx.fillStyle = groundColor(type);
+      ctx.fillRect(sx, sy, TILE, TILE);
+
+      if (type === GROUND.WATER) {
+        ctx.fillStyle = "rgba(255,255,255,0.24)";
+        ctx.fillRect(sx + 5, sy + 9, 17, 3);
+        ctx.fillRect(sx + 11, sy + 21, 14, 3);
+      } else {
+        ctx.fillStyle = "rgba(255,255,255,0.10)";
+        ctx.fillRect(sx + 6, sy + 7, 3, 3);
+
+        ctx.fillStyle = "rgba(0,0,0,0.12)";
+        ctx.fillRect(sx + 20, sy + 22, 4, 4);
+      }
+
+      ctx.strokeStyle = "rgba(0,0,0,0.12)";
+      ctx.strokeRect(sx, sy, TILE, TILE);
+    }
+
+    function drawBlock(tx, ty, id) {
+      const block = BLOCKS[id];
+
+      if (!block) return;
+
+      const sx = Math.floor(tx * TILE - cameraX);
+      const sy = Math.floor(ty * TILE - cameraY);
+
+      ctx.save();
+      ctx.globalAlpha = block.alpha ?? 1;
+
+      ctx.fillStyle = "rgba(0,0,0,0.28)";
+      ctx.fillRect(sx + 5, sy + 22, TILE - 10, 8);
+
+      ctx.fillStyle = block.side;
+      ctx.fillRect(sx + 4, sy + 12, TILE - 8, TILE - 9);
+
+      ctx.fillStyle = block.color;
+      ctx.fillRect(sx + 4, sy + 6, TILE - 8, TILE - 14);
+
+      ctx.fillStyle = block.top;
+      ctx.fillRect(sx + 6, sy + 3, TILE - 12, 8);
+
+      ctx.strokeStyle = "rgba(0,0,0,0.45)";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(sx + 4, sy + 6, TILE - 8, TILE - 3);
+
+      if (id === 8) {
+        const grad = ctx.createRadialGradient(
+          sx + 16,
+          sy + 16,
+          2,
+          sx + 16,
+          sy + 16,
+          85
+        );
+
+        grad.addColorStop(0, "rgba(250,204,21,0.35)");
+        grad.addColorStop(1, "rgba(250,204,21,0)");
+
+        ctx.fillStyle = grad;
+        ctx.fillRect(sx - 70, sy - 70, 160, 160);
+      }
+
+      ctx.restore();
+    }
+
+    function drawPlayer(p, isMe) {
+      const sx = Math.floor(p.x - cameraX);
+      const sy = Math.floor(p.y - cameraY);
+
+      ctx.fillStyle = "rgba(0,0,0,0.35)";
+      ctx.beginPath();
+      ctx.ellipse(sx, sy + 12, 13, 6, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = p.color || "#38bdf8";
+      ctx.fillRect(sx - 9, sy - 16, 18, 22);
+
+      ctx.fillStyle = "#fde68a";
+      ctx.fillRect(sx - 7, sy - 24, 14, 12);
+
+      ctx.fillStyle = "#111827";
+      ctx.fillRect(sx - 4, sy - 20, 2, 2);
+      ctx.fillRect(sx + 3, sy - 20, 2, 2);
+
+      ctx.strokeStyle = "rgba(0,0,0,0.55)";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(sx - 9, sy - 16, 18, 22);
+      ctx.strokeRect(sx - 7, sy - 24, 14, 12);
+
+      ctx.font = "12px Arial";
+      ctx.textAlign = "center";
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "black";
+      ctx.fillStyle = isMe ? "#7dd3fc" : "white";
+      ctx.strokeText(p.name || "Player", sx, sy - 31);
+      ctx.fillText(p.name || "Player", sx, sy - 31);
+    }
+
+    function reachable(tx, ty) {
+      if (!ready) return false;
+
+      const cx = (tx + 0.5) * TILE;
+      const cy = (ty + 0.5) * TILE;
+
+      return Math.hypot(cx - me.x, cy - me.y) <= TILE * 5;
+    }
+
+    function drawPreview() {
+      if (!inBounds(mouseTileX, mouseTileY)) return;
+
+      const sx = mouseTileX * TILE - cameraX;
+      const sy = mouseTileY * TILE - cameraY;
+
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = reachable(mouseTileX, mouseTileY) ? "#facc15" : "#ef4444";
+      ctx.strokeRect(sx + 2, sy + 2, TILE - 4, TILE - 4);
+    }
+
+    function render() {
+      ctx.clearRect(0, 0, innerWidth, innerHeight);
+
+      if (!ready) {
+        ctx.fillStyle = "white";
+        ctx.font = "22px Arial";
+        ctx.textAlign = "center";
+        ctx.fillText("Підключення до сервера...", innerWidth / 2, innerHeight / 2);
+        return;
+      }
+
+      const startX = Math.max(0, Math.floor(cameraX / TILE) - 1);
+      const startY = Math.max(0, Math.floor(cameraY / TILE) - 1);
+      const endX = Math.min(
+        world.width - 1,
+        Math.ceil((cameraX + innerWidth) / TILE) + 1
+      );
+      const endY = Math.min(
+        world.height - 1,
+        Math.ceil((cameraY + innerHeight) / TILE) + 1
+      );
+
+      for (let y = startY; y <= endY; y++) {
+        for (let x = startX; x <= endX; x++) {
+          drawGroundTile(
+            x,
+            y,
+            Math.floor(x * TILE - cameraX),
+            Math.floor(y * TILE - cameraY),
+            world.ground[idx(x, y)]
+          );
+        }
+      }
+
+      const drawables = [];
+
+      for (let y = startY; y <= endY; y++) {
+        for (let x = startX; x <= endX; x++) {
+          const o = world.objects[idx(x, y)];
+
+          if (o) {
+            drawables.push({
+              type: "block",
+              x,
+              y,
+              id: o,
+              depth: y * TILE + TILE
+            });
+          }
+        }
+      }
+
+      for (const id in players) {
+        const p = players[id];
+
+        drawables.push({
+          type: "player",
+          id,
+          player: id === playerId ? me : p,
+          depth: id === playerId ? me.y : p.y
+        });
+      }
+
+      drawables.sort((a, b) => a.depth - b.depth);
+
+      for (const d of drawables) {
+        if (d.type === "block") {
+          drawBlock(d.x, d.y, d.id);
+        } else {
+          drawPlayer(d.player, d.id === playerId);
+        }
+      }
+
+      drawPreview();
+
+      ctx.fillStyle = "rgba(5,10,25,0.12)";
+      ctx.fillRect(0, 0, innerWidth, innerHeight);
+    }
+
+    window.addEventListener("mousemove", e => {
+      mouseX = e.clientX;
+      mouseY = e.clientY;
+    });
+
+    window.addEventListener("mousedown", e => {
+      if (!ready) return;
+      if (!inBounds(mouseTileX, mouseTileY)) return;
+
+      if (!reachable(mouseTileX, mouseTileY)) {
+        showMsg("Занадто далеко!");
+        return;
+      }
+
+      if (e.button === 0) {
+        socket.emit("break", {
+          tx: mouseTileX,
+          ty: mouseTileY
+        });
+      }
+
+      if (e.button === 2) {
+        socket.emit("place", {
+          tx: mouseTileX,
+          ty: mouseTileY,
+          block: selected
+        });
+      }
+    });
+
+    window.addEventListener("contextmenu", e => {
+      e.preventDefault();
+    });
+
+    window.addEventListener("keydown", e => {
+      keys[e.key.toLowerCase()] = true;
+
+      const n = Number(e.key);
+
+      if (n >= 1 && n <= 8) {
+        selected = n;
+        renderHotbar();
+        showMsg("Обрано: " + BLOCKS[selected].name);
+      }
+    });
+
+    window.addEventListener("keyup", e => {
+      keys[e.key.toLowerCase()] = false;
+    });
+
+    function loop(now) {
+      const dt = Math.min(0.033, (now - last) / 1000);
+      last = now;
+
+      update(dt);
+      render();
+
+      requestAnimationFrame(loop);
+    }
+
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
